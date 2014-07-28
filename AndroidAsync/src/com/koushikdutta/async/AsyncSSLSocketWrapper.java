@@ -38,7 +38,7 @@ public class AsyncSSLSocketWrapper implements AsyncSocketWrapper, AsyncSSLSocket
     BufferedDataEmitter mEmitter;
     BufferedDataSink mSink;
     boolean mUnwrapping;
-    SSLEngine engine;
+    final SSLEngine engine;
     boolean finishedHandshake;
     private int mPort;
     private String mHost;
@@ -61,11 +61,17 @@ public class AsyncSSLSocketWrapper implements AsyncSocketWrapper, AsyncSSLSocket
             // fallback is to use a custom SSLContext, and hack around the x509 extension.
             if (Build.VERSION.SDK_INT <= 15)
                 throw new Exception();
-            defaultSSLContext = SSLContext.getInstance("Default");
+            if (Build.VERSION.SDK_INT == 19)
+                throw new Exception("conscrypt throwing on KitKat");
+            else
+                defaultSSLContext = SSLContext.getInstance("Default");
         }
         catch (Exception ex) {
             try {
-                defaultSSLContext = SSLContext.getInstance("TLS");
+                if (Build.VERSION.SDK_INT == 19)
+                    defaultSSLContext = SSLContext.getInstance("TLS", "HarmonyJSSE");
+                else
+                    defaultSSLContext = SSLContext.getInstance("TLS");
                 TrustManager[] trustAllCerts = new TrustManager[] { new X509TrustManager() {
                     public java.security.cert.X509Certificate[] getAcceptedIssuers() {
                         return new X509Certificate[0];
