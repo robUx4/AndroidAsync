@@ -28,6 +28,13 @@ Download [the latest JAR](http://repository.sonatype.org/service/local/artifact/
 </dependency>
 ```
 
+Gradle: 
+```groovy
+dependencies {
+    compile 'com.koushikdutta.androidasync:AndroidAsync:1.0.0'
+}
+```
+
 ### Download a url to a String
 
 ```java
@@ -282,3 +289,6 @@ client.getString("http://foo.com/hello.txt")
 });
 ```
 
+### Note on SSLv3
+
+https://github.com/koush/AndroidAsync/issues/174

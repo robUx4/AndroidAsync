@@ -31,8 +31,13 @@ import java.util.Set;
 import java.util.WeakHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class AsyncServer {
     public static final String LOGTAG = "NIO";
@@ -86,7 +91,7 @@ public class AsyncServer {
         catch (Throwable ex) {
         }
     }
-    
+
     static AsyncServer mInstance = new AsyncServer();
     public static AsyncServer getDefault() {
         return mInstance;
@@ -115,7 +120,7 @@ public class AsyncServer {
         ckey.attach(handler);
         handler.setup(this, ckey);
     }
-    
+
     public void removeAllCallbacks(Object scheduled) {
         synchronized (this) {
             mQueue.remove(scheduled);
@@ -138,7 +143,7 @@ public class AsyncServer {
 	        Log.i(LOGTAG, "Executor shutdown");
         }
     }
-    
+
     public Object postDelayed(Runnable runnable, long delay) {
         Scheduled s;
         synchronized (this) {
@@ -165,11 +170,11 @@ public class AsyncServer {
         }
         return s;
     }
-    
+
     public Object post(Runnable runnable) {
         return postDelayed(runnable, 0);
     }
-    
+
     public Object post(final CompletedCallback callback, final Exception e) {
         return post(new Runnable() {
             @Override
@@ -178,7 +183,7 @@ public class AsyncServer {
             }
         });
     }
-    
+
     public void run(final Runnable runnable) {
         if (Thread.currentThread() == mAffinity) {
             post(runnable);
@@ -267,7 +272,7 @@ public class AsyncServer {
         catch (Exception e) {
         }
     }
-    
+
     protected void onDataReceived(int transmitted) {
     }
 
@@ -339,7 +344,7 @@ public class AsyncServer {
         SocketChannel socket;
         ConnectCallback callback;
     }
-    
+
     private ConnectFuture connectResolvedInetSocketAddress(final InetSocketAddress address, final ConnectCallback callback) {
         final ConnectFuture cancel = new ConnectFuture();
         assert !address.isUnresolved();
@@ -400,7 +405,14 @@ public class AsyncServer {
         return connectSocket(InetSocketAddress.createUnresolved(host, port), callback);
     }
 
-    private static ExecutorService synchronousWorkers = Executors.newFixedThreadPool(4);
+    private static ExecutorService newSynchronousWorkers() {
+        ThreadFactory tf = new NamedThreadFactory("AsyncServer-worker-");
+        ThreadPoolExecutor tpe = new ThreadPoolExecutor(1, 4, 10L,
+            TimeUnit.SECONDS, new LinkedBlockingQueue<Runnable>(), tf);
+        return tpe;
+    }
+
+    private static ExecutorService synchronousWorkers = newSynchronousWorkers();
     public Future<InetAddress[]> getAllByName(final String host) {
         final SimpleFuture<InetAddress[]> ret = new SimpleFuture<InetAddress[]>();
         if (!synchronousWorkers.isShutdown()) {
@@ -496,7 +508,7 @@ public class AsyncServer {
         });
         return handler;
     }
-    
+
     public AsyncDatagramSocket connectDatagram(final SocketAddress remote) throws IOException {
         final DatagramChannel socket = DatagramChannel.open();
         final AsyncDatagramSocket handler = new AsyncDatagramSocket();
@@ -518,7 +530,7 @@ public class AsyncServer {
         });
         return handler;
     }
-    
+
     final static WeakHashMap<Thread, AsyncServer> mServers = new WeakHashMap<Thread, AsyncServer>();
 
     private boolean addMe() {
@@ -536,7 +548,7 @@ public class AsyncServer {
     public static AsyncServer getCurrentThreadServer() {
         return mServers.get(Thread.currentThread());
     }
-    
+
     Thread mAffinity;
     private void run(boolean newThread) {
         final SelectorWrapper selector;
@@ -595,7 +607,7 @@ public class AsyncServer {
                 runLoop(this, selector, queue);
             }
             catch (AsyncSelectorException e) {
-                Log.e(LOGTAG, "Selector exception", e);
+                Log.i(LOGTAG, "Selector closed", e);
                 try {
                     // StreamUtility.closeQuiety is throwing ArrayStoreException?
                     selector.getSelector().close();
@@ -605,10 +617,10 @@ public class AsyncServer {
             }
             return;
         }
-        
+
         run(this, selector, queue);
     }
-    
+
     private static void run(final AsyncServer server, final SelectorWrapper selector, final PriorityQueue<Scheduled> queue) {
 //        Log.i(LOGTAG, "****AsyncServer is starting.****");
         // at this point, this local queue and selector are owned
@@ -675,11 +687,11 @@ public class AsyncServer {
         catch (Exception e) {
         }
     }
-    
+
     private static final long QUEUE_EMPTY = Long.MAX_VALUE;
     private static long lockAndRunQueue(final AsyncServer server, final PriorityQueue<Scheduled> queue) {
         long wait = QUEUE_EMPTY;
-        
+
         // find the first item we can actually run
         while (true) {
             Scheduled run = null;
@@ -698,10 +710,10 @@ public class AsyncServer {
                     }
                 }
             }
-            
+
             if (run == null)
                 break;
-            
+
             run.runnable.run();
         }
 
@@ -843,11 +855,11 @@ public class AsyncServer {
             }
         });
     }
-    
+
     public Thread getAffinity() {
         return mAffinity;
     }
-    
+
     public boolean isAffinityThread() {
         return mAffinity == Thread.currentThread();
     }
@@ -855,5 +867,28 @@ public class AsyncServer {
     public boolean isAffinityThreadOrStopped() {
         Thread affinity = mAffinity;
         return affinity == null || affinity == Thread.currentThread();
+    }
+
+    private static class NamedThreadFactory implements ThreadFactory {
+        private final ThreadGroup group;
+        private final AtomicInteger threadNumber = new AtomicInteger(1);
+        private final String namePrefix;
+
+        NamedThreadFactory(String namePrefix) {
+            SecurityManager s = System.getSecurityManager();
+            group = (s != null) ? s.getThreadGroup() :
+                Thread.currentThread().getThreadGroup();
+            this.namePrefix = namePrefix;
+        }
+
+        public Thread newThread(Runnable r) {
+            Thread t = new Thread(group, r,
+                namePrefix + threadNumber.getAndIncrement(), 0);
+            if (t.isDaemon()) t.setDaemon(false);
+            if (t.getPriority() != Thread.NORM_PRIORITY) {
+                t.setPriority(Thread.NORM_PRIORITY);
+            }
+            return t;
+        }
     }
 }
