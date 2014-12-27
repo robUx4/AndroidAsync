@@ -32,7 +32,6 @@ import java.util.WeakHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -128,20 +127,17 @@ public class AsyncServer {
     }
 
     private static void wakeup(final SelectorWrapper selector) {
-        if (!synchronousWorkers.isShutdown()) {
-            synchronousWorkers.execute(new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        selector.wakeupOnce();
-                    } catch (Exception e) {
-                        Log.i(LOGTAG, "Selector Exception? L Preview?");
-                    }
+        synchronousWorkers.execute(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    selector.wakeupOnce();
                 }
-            });
-        } else {
-	        Log.i(LOGTAG, "Executor shutdown");
-        }
+                catch (Exception e) {
+                    Log.i(LOGTAG, "Selector Exception? L Preview?");
+                }
+            }
+        });
     }
 
     public Object postDelayed(Runnable runnable, long delay) {
@@ -415,34 +411,29 @@ public class AsyncServer {
     private static ExecutorService synchronousWorkers = newSynchronousWorkers();
     public Future<InetAddress[]> getAllByName(final String host) {
         final SimpleFuture<InetAddress[]> ret = new SimpleFuture<InetAddress[]>();
-        if (!synchronousWorkers.isShutdown()) {
-            synchronousWorkers.execute(new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        final InetAddress[] result = InetAddress.getAllByName(host);
-                        if (result == null || result.length == 0)
-                            throw new HostnameResolutionException("no addresses for host");
-                        post(new Runnable() {
-                            @Override
-                            public void run() {
-                                ret.setComplete(null, result);
-                            }
-                        });
-                    } catch (final Exception e) {
-                        post(new Runnable() {
-                            @Override
-                            public void run() {
-                                ret.setComplete(e, null);
-                            }
-                        });
-                    }
+        synchronousWorkers.execute(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    final InetAddress[] result = InetAddress.getAllByName(host);
+                    if (result == null || result.length == 0)
+                        throw new HostnameResolutionException("no addresses for host");
+                    post(new Runnable() {
+                        @Override
+                        public void run() {
+                            ret.setComplete(null, result);
+                        }
+                    });
+                } catch (final Exception e) {
+                    post(new Runnable() {
+                        @Override
+                        public void run() {
+                            ret.setComplete(e, null);
+                        }
+                    });
                 }
-            });
-        } else {
-	        Log.i(LOGTAG, "Executor shutdown");
-	        ret.setComplete(new RejectedExecutionException("Executor shutdown"), null);
-        }
+            }
+        });
         return ret;
     }
 
